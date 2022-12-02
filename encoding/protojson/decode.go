@@ -40,9 +40,8 @@ type UnmarshalOptions struct {
 	// If DiscardUnknown is set, unknown fields are ignored.
 	DiscardUnknown bool
 
-	// IgnoreUnmarshalJSON ignores UnmarshalJSON functions on messages.
-	// If unset: will call UnmarshalJSON on message types, if it exists.
-	IgnoreUnmarshalJSON bool
+	// UseUnmarshalJSON calls UnmarshalJSON on messages implementing json.Unmarshaler.
+	UseUnmarshalJSON bool
 
 	// Resolver is used for looking up types when unmarshaling
 	// google.protobuf.Any messages or extension fields.
@@ -148,7 +147,7 @@ func (d decoder) unmarshalObjectToJSON() ([]byte, error) {
 
 // unmarshalMessage unmarshals a message into the given protoreflect.Message.
 func (d decoder) unmarshalMessage(m protoreflect.Message, skipTypeURL bool) error {
-	if !d.opts.IgnoreUnmarshalJSON {
+	if d.opts.UseUnmarshalJSON {
 		if jdec, jdecOk := m.Interface().(protoreflect.ProtoMessageWithJSONUnmarshaler); jdecOk {
 			// advance the decoder to extract the raw json for this entire message
 			messageData, err := d.unmarshalObjectToJSON()

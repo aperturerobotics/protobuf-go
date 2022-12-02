@@ -16,6 +16,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoregistry"
 
 	testpb "google.golang.org/protobuf/internal/testprotos/test"
+	ujsonpb "google.golang.org/protobuf/internal/testprotos/test/ujson"
 	weakpb "google.golang.org/protobuf/internal/testprotos/test/weak1"
 	pb2 "google.golang.org/protobuf/internal/testprotos/textpb2"
 	pb3 "google.golang.org/protobuf/internal/testprotos/textpb3"
@@ -2452,6 +2453,18 @@ func TestUnmarshal(t *testing.T) {
 		inputText:    `{"weak_message1":{"a":1}, "weak_message2":{"a":1}}`,
 		wantErr:      `unknown field "weak_message2"`, // weak_message2 is unknown since the package containing it is not imported
 		skip:         !flags.ProtoLegacy,
+	}, {
+		desc: "json unmarshaler",
+		umo: protojson.UnmarshalOptions{
+			UseUnmarshalJSON: true,
+		},
+		inputMessage: &ujsonpb.TestUnmarshalJSON{},
+		inputText:    `{"json_field":{"a":1,"b":true}}`,
+		wantMessage: func() *ujsonpb.TestUnmarshalJSON {
+			m := new(ujsonpb.TestUnmarshalJSON)
+			m.JsonField = `{"a":1,"b":true}`
+			return m
+		},
 	}}
 
 	for _, tt := range tests {
