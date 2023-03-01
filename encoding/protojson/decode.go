@@ -122,6 +122,7 @@ func (d decoder) unmarshalObjectToJSON() ([]byte, error) {
 	startPos := d.CurrentPos()
 
 	// rewind to include the {
+	// note: this is due to confusing logic for Read() vs. Peek(0)
 	for d.Original()[startPos] != '{' && startPos > 0 {
 		startPos--
 	}
