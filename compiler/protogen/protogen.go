@@ -42,6 +42,15 @@ import (
 
 const goPackageDocURL = "https://protobuf.dev/reference/go/go-generated#package"
 
+// optional env var to set the well known types pkg prefix
+var typesPackage string = os.Getenv("PROTOBUF_GO_TYPES_PKG")
+
+func init() {
+	if len(typesPackage) != 0 && !strings.HasSuffix(typesPackage, "/") {
+		typesPackage = typesPackage + "/"
+	}
+}
+
 // Run executes a function as a protoc plugin.
 //
 // It reads a [pluginpb.CodeGeneratorRequest] message from [os.Stdin], invokes the plugin
@@ -240,6 +249,11 @@ func (opts Options) New(req *pluginpb.CodeGeneratorRequest) (*Plugin, error) {
 		// the "go_package" option in the .proto source file.
 		filename := fdesc.GetName()
 		impPath, pkgName := splitImportPathAndPackageName(fdesc.GetOptions().GetGoPackage())
+		// HACK: replace well known types path
+		trimTypesPrefix := "google.golang.org/protobuf/types/"
+		if typesPackage != "" && strings.HasPrefix(string(impPath), trimTypesPrefix) {
+			impPath = GoImportPath(typesPackage + strings.TrimPrefix(string(impPath), trimTypesPrefix))
+		}
 		if importPaths[filename] == "" && impPath != "" {
 			importPaths[filename] = impPath
 		}
