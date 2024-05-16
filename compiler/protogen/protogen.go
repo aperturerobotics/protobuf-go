@@ -1069,10 +1069,12 @@ func (g *GeneratedFile) Content() ([]byte, error) {
 	// Collect a sorted list of all imports.
 	var importPaths [][2]string
 	rewriteImport := func(importPath string) string {
+		goImportPath := GoImportPath(importPath)
+		goImportPath = adjustTypesPackage(goImportPath)
 		if f := g.gen.opts.ImportRewriteFunc; f != nil {
-			return string(f(GoImportPath(importPath)))
+			return string(f(goImportPath))
 		}
-		return importPath
+		return string(goImportPath)
 	}
 	for importPath := range g.packageNames {
 		pkgName := string(g.packageNames[GoImportPath(importPath)])
