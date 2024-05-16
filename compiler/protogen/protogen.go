@@ -19,7 +19,7 @@ import (
 	"go/printer"
 	"go/token"
 	"go/types"
-	"io/ioutil"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -41,6 +41,8 @@ import (
 )
 
 const goPackageDocURL = "https://protobuf.dev/reference/go/go-generated#package"
+
+const trimTypesPrefix = "google.golang.org/protobuf/types/"
 
 // optional env var to set the well known types pkg prefix
 var typesPackage string = os.Getenv("PROTOBUF_GO_TYPES_PKG")
@@ -69,7 +71,7 @@ func run(opts Options, f func(*Plugin) error) error {
 	if len(os.Args) > 1 {
 		return fmt.Errorf("unknown argument %q (this program should be run by protoc, not directly)", os.Args[1])
 	}
-	in, err := ioutil.ReadAll(os.Stdin)
+	in, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return err
 	}
@@ -249,11 +251,7 @@ func (opts Options) New(req *pluginpb.CodeGeneratorRequest) (*Plugin, error) {
 		// the "go_package" option in the .proto source file.
 		filename := fdesc.GetName()
 		impPath, pkgName := splitImportPathAndPackageName(fdesc.GetOptions().GetGoPackage())
-		// HACK: replace well known types path
-		trimTypesPrefix := "google.golang.org/protobuf/types/"
-		if typesPackage != "" && strings.HasPrefix(string(impPath), trimTypesPrefix) {
-			impPath = GoImportPath(typesPackage + strings.TrimPrefix(string(impPath), trimTypesPrefix))
-		}
+		impPath = adjustTypesPackage(impPath)
 		if importPaths[filename] == "" && impPath != "" {
 			importPaths[filename] = impPath
 		}
@@ -473,10 +471,10 @@ func newFile(gen *Plugin, p *descriptorpb.FileDescriptorProto, packageName GoPac
 		f.Messages = append(f.Messages, newMessage(gen, f, nil, mds.Get(i)))
 	}
 	for i, xds := 0, desc.Extensions(); i < xds.Len(); i++ {
-		f.Extensions = append(f.Extensions, newField(gen, f, nil, xds.Get(i)))
+		f.Extensions = append(f.Extensions, newField(f, nil, xds.Get(i)))
 	}
 	for i, sds := 0, desc.Services(); i < sds.Len(); i++ {
-		f.Services = append(f.Services, newService(gen, f, sds.Get(i)))
+		f.Services = append(f.Services, newService(f, sds.Get(i)))
 	}
 	for _, message := range f.Messages {
 		if err := message.resolveDependencies(gen); err != nil {
@@ -534,7 +532,7 @@ func newEnum(gen *Plugin, f *File, parent *Message, desc protoreflect.EnumDescri
 	}
 	gen.enumsByName[desc.FullName()] = enum
 	for i, vds := 0, enum.Desc.Values(); i < vds.Len(); i++ {
-		enum.Values = append(enum.Values, newEnumValue(gen, f, parent, enum, vds.Get(i)))
+		enum.Values = append(enum.Values, newEnumValue(f, parent, enum, vds.Get(i)))
 	}
 	return enum
 }
@@ -551,7 +549,7 @@ type EnumValue struct {
 	Comments CommentSet // comments associated with this enum value
 }
 
-func newEnumValue(gen *Plugin, f *File, message *Message, enum *Enum, desc protoreflect.EnumValueDescriptor) *EnumValue {
+func newEnumValue(f *File, message *Message, enum *Enum, desc protoreflect.EnumValueDescriptor) *EnumValue {
 	// A top-level enum value's name is: EnumName_ValueName
 	// An enum value contained in a message is: MessageName_ValueName
 	//
@@ -609,13 +607,13 @@ func newMessage(gen *Plugin, f *File, parent *Message, desc protoreflect.Message
 		message.Messages = append(message.Messages, newMessage(gen, f, message, mds.Get(i)))
 	}
 	for i, fds := 0, desc.Fields(); i < fds.Len(); i++ {
-		message.Fields = append(message.Fields, newField(gen, f, message, fds.Get(i)))
+		message.Fields = append(message.Fields, newField(f, message, fds.Get(i)))
 	}
 	for i, ods := 0, desc.Oneofs(); i < ods.Len(); i++ {
-		message.Oneofs = append(message.Oneofs, newOneof(gen, f, message, ods.Get(i)))
+		message.Oneofs = append(message.Oneofs, newOneof(f, message, ods.Get(i)))
 	}
 	for i, xds := 0, desc.Extensions(); i < xds.Len(); i++ {
-		message.Extensions = append(message.Extensions, newField(gen, f, message, xds.Get(i)))
+		message.Extensions = append(message.Extensions, newField(f, message, xds.Get(i)))
 	}
 
 	// Resolve local references between fields and oneofs.
@@ -745,7 +743,7 @@ type Field struct {
 	Comments CommentSet // comments associated with this field
 }
 
-func newField(gen *Plugin, f *File, message *Message, desc protoreflect.FieldDescriptor) *Field {
+func newField(f *File, message *Message, desc protoreflect.FieldDescriptor) *Field {
 	var loc Location
 	switch {
 	case desc.IsExtension() && message == nil:
@@ -823,7 +821,7 @@ type Oneof struct {
 	Comments CommentSet // comments associated with this oneof
 }
 
-func newOneof(gen *Plugin, f *File, message *Message, desc protoreflect.OneofDescriptor) *Oneof {
+func newOneof(f *File, message *Message, desc protoreflect.OneofDescriptor) *Oneof {
 	loc := message.Location.appendPath(genid.DescriptorProto_OneofDecl_field_number, desc.Index())
 	camelCased := strs.GoCamelCase(string(desc.Name()))
 	parentPrefix := message.GoIdent.GoName + "_"
@@ -855,7 +853,7 @@ type Service struct {
 	Comments CommentSet // comments associated with this service
 }
 
-func newService(gen *Plugin, f *File, desc protoreflect.ServiceDescriptor) *Service {
+func newService(f *File, desc protoreflect.ServiceDescriptor) *Service {
 	loc := f.location.appendPath(genid.FileDescriptorProto_Service_field_number, desc.Index())
 	service := &Service{
 		Desc:     desc,
@@ -864,7 +862,7 @@ func newService(gen *Plugin, f *File, desc protoreflect.ServiceDescriptor) *Serv
 		Comments: makeCommentSet(f.Desc.SourceLocations().ByDescriptor(desc)),
 	}
 	for i, mds := 0, desc.Methods(); i < mds.Len(); i++ {
-		service.Methods = append(service.Methods, newMethod(gen, f, service, mds.Get(i)))
+		service.Methods = append(service.Methods, newMethod(f, service, mds.Get(i)))
 	}
 	return service
 }
@@ -884,7 +882,7 @@ type Method struct {
 	Comments CommentSet // comments associated with this method
 }
 
-func newMethod(gen *Plugin, f *File, service *Service, desc protoreflect.MethodDescriptor) *Method {
+func newMethod(f *File, service *Service, desc protoreflect.MethodDescriptor) *Method {
 	loc := service.Location.appendPath(genid.ServiceDescriptorProto_Method_field_number, desc.Index())
 	method := &Method{
 		Desc:     desc,
@@ -1394,4 +1392,12 @@ func (e *extensionRegistry) registerExtension(xd protoreflect.ExtensionDescripto
 		return err
 	}
 	return e.local.RegisterExtension(dynamicpb.NewExtensionType(xd))
+}
+
+// adjustTypesPackage replaces the well known types path if typesPackage is set.
+func adjustTypesPackage(impPath GoImportPath) GoImportPath {
+	if typesPackage != "" && strings.HasPrefix(string(impPath), trimTypesPrefix) {
+		return GoImportPath(typesPackage + strings.TrimPrefix(string(impPath), trimTypesPrefix))
+	}
+	return impPath
 }
